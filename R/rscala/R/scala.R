@@ -72,24 +72,19 @@ scala <- function(JARs=character(),
   details <- new.env(parent=emptyenv())
   sConfig <- tryCatch(scalaConfig(FALSE), error=function(e) list(error=e))
   if ( is.null(sConfig$error) ) {
-    scalaMajor <- sConfig$scalaMajorVersion
-    rscalaJAR <- shQuote(list.files(system.file(file.path("java",paste0("scala-",scalaMajor)),package="rscala",mustWork=FALSE),full.names=TRUE))
-    if ( rscalaJAR[1] == "" ) {
-      sConfig$error <- list(message=paste0("\n\n<<<<<<<<<<\n<<<<<<<<<<\n<<<<<<<<<<\n\nScala version ",sConfig$scalaFullVersion," is not among the support versions: ",paste(names(scalaVersionJARs()),collapse=", "),".\nPlease run 'rscala::scalaConfig(reconfig=TRUE)'\n\n>>>>>>>>>>\n>>>>>>>>>>\n>>>>>>>>>>\n"))
-    } else {
-      heap.maximum <- getHeapMaximum(heap.maximum,sConfig$javaArchitecture == 32)
-      heap.maximum.argument <- if ( is.null(heap.maximum) ) NULL
-      else shQuote(paste0("-J-Xmx",heap.maximum))
-      sessionFilename <- tempfile("rscala-session-")
-      writeLines(character(),sessionFilename)
-      portsFilename <- tempfile("rscala-ports-")
-      args <- c(heap.maximum.argument,shQuote(command.line.arguments),"-nc","-classpath",rscalaJAR,"org.ddahl.rscala.server.Main",rscalaJAR,port,portsFilename,sessionFilename,debug,serialize.output,FALSE)
-      oldJavaEnv <- setJavaEnv(sConfig)
-      system2(sConfig$scalaCmd,args,wait=FALSE,stdout=stdout,stderr=stderr)
-      setJavaEnv(oldJavaEnv)
-      assign("sessionFilename",sessionFilename,envir=details)
-      assign("portsFilename",portsFilename,envir=details)
-    }
+    rscalaClasspath <- getRscalaClasspath(JARs, sConfig)
+    heap.maximum <- getHeapMaximum(heap.maximum,sConfig$javaArchitecture == 32)
+    heap.maximum.argument <- if ( is.null(heap.maximum) ) NULL
+                             else shQuote(paste0("-J-Xmx",heap.maximum))
+    sessionFilename <- tempfile("rscala-session-")
+    writeLines(character(),sessionFilename)
+    portsFilename <- tempfile("rscala-ports-")
+    args <- c(heap.maximum.argument,shQuote(command.line.arguments),"-nc","-classpath",rscalaClasspath,"org.ddahl.rscala.server.Main",rscalaClasspath,port,portsFilename,sessionFilename,debug,serialize.output,FALSE)
+    oldJavaEnv <- setJavaEnv(sConfig)
+    system2(sConfig$scalaCmd,args,wait=FALSE,stdout=stdout,stderr=stderr)
+    setJavaEnv(oldJavaEnv)
+    assign("sessionFilename",sessionFilename,envir=details)
+    assign("portsFilename",portsFilename,envir=details)
   }
   assign("closed",FALSE,envir=details)
   assign("disconnected",TRUE,envir=details)
@@ -243,4 +238,31 @@ getHeapMaximum <- function(heap.maximum,is32bit) {
     if ( is32bit ) bytes <- min(c(1.35*1024^3,bytes))   # 32 binaries have limited memory.
     paste0(max(32,as.integer(memoryPercentage * (bytes / 1024^2))),"M")  # At least 32M
   } else NULL
+}
+
+#' Get the classpath for launching scala side
+#'
+#' The classpath contains the rscala jar, plus all the jars passed as argument. In case
+#' the JARs parameter points to a package, it will contain all the jars in the proper folder
+#' @param JARs Character vector whose elements are some combination of
+#'   individual JAR files or package names which contain embedded JARs.  These
+#'   JAR files are added to the runtime classpath.
+#' @param sConfig Scala configuration. As gathered from \code{\link{scalaConfig}}
+#' @return A character string with the classpath information
+getRscalaClasspath <- function(JARs, sConfig) {
+    ## Get the rscala jar
+    scalaMajor <- sConfig$scalaMajorVersion
+    rscalaJAR <- list.files(system.file(file.path("java",paste0("scala-",scalaMajor)),package="rscala",mustWork=FALSE),full.names=TRUE)
+    if ( rscalaJAR[1] == "" ) {
+        stop("\n\n<<<<<<<<<<\n<<<<<<<<<<\n<<<<<<<<<<\n\nScala version ",sConfig$scalaFullVersion," is not among the support versions: ",paste(names(scalaVersionJARs()),collapse=", "),".\nPlease run 'rscala::scalaConfig(reconfig=TRUE)'\n\n>>>>>>>>>>\n>>>>>>>>>>\n>>>>>>>>>>\n")
+    }
+
+    ## Get the other JARs, in case a package is passed as parameter
+    if (! identical(find.package(JARs,quiet=TRUE),character(0))) {
+        JARs <- jarsOfPackage(JARs, scalaMajor)
+    }
+
+    ## Build the class path, joining both sides
+    classPath <- paste(normalizePath(c(rscalaJAR,JARs)),collapse=";")
+    classPath
 }
